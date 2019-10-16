@@ -8,16 +8,17 @@ internal void *global_block_head = 0;
 
 typedef struct {
     size_t size;
-    void *next_block;
+    void *next;
     int free;
     int magic;    
+    char data[0];
 } BlockHdr;
 
 internal BlockHdr *find_free_block(BlockHdr **last, size_t size) {
     BlockHdr *current = (BlockHdr *)global_block_head;
     while (current && !(current->free && current->size >= size)){
         *last = current;
-        current = current->next_block;
+        current = current->next;
     }
     return current;
 }
@@ -30,13 +31,23 @@ internal BlockHdr *request_space(BlockHdr *last, size_t size) {
         return 0;
     }
     if (last) {
-        last->next_block = block;
+        last->next = block;
     }
     block->size = size;
     block->free = 0;
-    block->next_block = 0;
+    block->next = 0;
     block->magic = 0x12345678;
     return block;
+}
+
+void split_block(BlockHdr *block, size_t size) {
+    BlockHdr *new_block = block->data + size;
+    new_block->size = block->size - size - sizeof(BlockHdr);
+    new_block->magic = 0x12345678;
+    new_block->next = block->next;
+    new_block->free = 1;
+    block->size = size;
+    block->next = new_block;
 }
 
 void *allocate(size_t size) {
@@ -53,11 +64,14 @@ void *allocate(size_t size) {
             block = request_space(last, size);
             if (!block) return 0;
         } else {
+            if (block->size > size) {
+                split_block(block, size);
+            }
             block->free = 0;
             block->magic = 0x77777777;
         }
     }
-    return block + 1;
+    return block->data;
 }
 
 BlockHdr *get_block_header(void *ptr) {
