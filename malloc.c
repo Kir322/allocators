@@ -3,12 +3,13 @@
 #include <string.h>
 
 #define internal static
+#define allign4(x) (((((x)-1)>>2)<<2)+4)
 
 internal void *global_block_head = 0;
 
-typedef struct {
+typedef struct BlockHdr {
     size_t size;
-    void *next;
+    struct BlockHdr *next;
     int free;
     int magic;    
     char data[0];
@@ -53,6 +54,7 @@ void split_block(BlockHdr *block, size_t size) {
 void *allocate(size_t size) {
     BlockHdr *block;
     if (size <= 0) return 0;
+    size = allign4(size);
     if (!global_block_head) {
         block = request_space(0, size);
         if (!block) return 0;
@@ -78,6 +80,12 @@ BlockHdr *get_block_header(void *ptr) {
     return (BlockHdr *)ptr - 1;
 }
 
+void merge_in_one_block(BlockHdr *block) {
+    BlockHdr *next = block->next;
+    block->size += next->size + sizeof(BlockHdr);
+    block->next = next->next;
+}
+
 void deallocate(void *ptr) {
     if (!ptr) return;
 
@@ -85,6 +93,9 @@ void deallocate(void *ptr) {
     assert(block->size > 0);
     assert(block->free == 0);
     assert(block->magic == 0x12345678 || block->magic == 0x77777777);
+    if (block->next->free) {
+        merge_in_one_block(block);
+    }
     block->free = 1;
     block->magic = 0x55555555;
 }
@@ -93,8 +104,12 @@ void *reallocate(void *ptr, size_t size) {
     if (!ptr) {
         return allocate(size);
     }
+    size = allign4(size);
     BlockHdr *block = get_block_header(ptr);
     if (block->size >= size) {
+        if (block->size != size) {
+            split_block(block, size);
+        }
         return ptr;
     }
 
